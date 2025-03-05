@@ -17,6 +17,7 @@ import {
 import { environmentVariables } from './libs/envs';
 import { handlePullRequestMessage } from './libs/pr';
 import * as pulumiCli from './libs/pulumi-cli';
+import { acquireGlobalLock, releaseGlobalLock } from './lock'
 import { login } from './login';
 
 const main = async () => {
@@ -31,7 +32,13 @@ const main = async () => {
   // Attempt to parse the full configuration and run the action.
   const config = await makeConfig();
   core.debug('Configuration is loaded');
-  runAction(config);
+  try {
+    const now = Date.now();
+    await acquireGlobalLock(`${config.stackName}-${now}`);
+    await runAction(config);
+  } finally {
+    await releaseGlobalLock();
+  }
 };
 
 // installOnly is the main entrypoint of the program when the user

@@ -1,0 +1,45 @@
+import * as core from '@actions/core';
+import { DeleteItemCommand, DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+
+const tableName = 'LocksTable';
+const client = new DynamoDBClient({ region: 'us-east-1' });
+const lockID = 'pulumi-global-lock';
+const defaultTTL = 10;
+
+export async function acquireGlobalLock(owner: string): Promise<void> {
+    for (; ;) {
+        try {
+            const now = Math.floor(Date.now() / 1000);
+            const ttl = now + defaultTTL;
+            await client.send(new PutItemCommand({
+                TableName: tableName,
+                Item: {
+                    "LockID": { S: lockID },
+                    "Owner": { S: owner },
+                    "ExpireTime": { N: ttl.toString() }
+                },
+                ConditionExpression: "attribute_not_exists(LockID) OR ExpireTime < :now",
+                ExpressionAttributeValues: { ":now": { N: now.toString() } }
+            }));
+            core.debug(`pulumi global lock acquired: ${owner}`);
+            return
+        } catch (e) {
+            core.debug(`waiting for pulumi global lock: ${owner}: ${e}`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+    }
+}
+
+export async function releaseGlobalLock(): Promise<void> {
+    try {
+        await client.send(new DeleteItemCommand({
+            TableName: tableName,
+            Key: {
+                "LockID": { S: lockID },
+            }
+        }))
+        core.debug('pulumi global lock released');
+    } catch (e) {
+        core.debug(`failed to release pulumi global lock: ${e}`);
+    }
+}
